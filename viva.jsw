@@ -1,0 +1,139 @@
+// viva.jsw
+import { getSecret } from 'wix-secrets-backend';
+import { fetch } from 'wix-fetch';
+
+export async function getVivaCredentials() {
+    try {
+        const vivaApiKey = await getSecret('viva_api_key');
+        const vivaMerchantId = await getSecret('viva_merchant_id');
+        const vivaClientSecret = await getSecret('viva_client_secret');
+        const vivaClientId = await getSecret('viva_client_id');
+
+        return {
+            viva_api_key: vivaApiKey,
+            viva_merchant_id: vivaMerchantId,
+            viva_client_secret: vivaClientSecret,
+            viva_client_id: vivaClientId
+        };
+    } catch (error) {
+        console.error('Error retrieving Viva credentials:', error);
+        throw error;
+    }
+}
+
+export async function getVivaAccessToken() {
+    try {
+        const credentials = await getVivaCredentials();
+        const { viva_client_id, viva_client_secret } = credentials;
+        const credentialsString = `${viva_client_id}:${viva_client_secret}`;
+        const base64Credentials = Buffer.from(credentialsString).toString('base64');
+        const tokenUrl = 'https://accounts.vivapayments.com/connect/token';
+        const response = await fetch(tokenUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Authorization': `Basic ${base64Credentials}`
+            },
+            body: 'grant_type=client_credentials' // Removed invalid scope parameter
+        });
+        if (response.ok) {
+            const data = await response.json();
+            console.log('Access Token Response:', data); // Debug token response (check for assigned scope like "urn:viva:payments:core:api:redirectcheckout")
+            return {
+                access_token: data.access_token,
+                token_type: data.token_type,
+                expires_in: data.expires_in
+            };
+        } else {
+            const errorBody = await response.text();
+            console.error('Token API Error Response:', errorBody);
+            throw new Error(`Failed to obtain access token: ${response.status} ${response.statusText} - ${errorBody}`);
+        }
+    } catch (error) {
+        console.error('Error obtaining Viva access token:', error);
+        throw error;
+    }
+}
+
+//sourceCode 9393
+
+export async function getVivaCheckoutUrl(paymentData) {
+    try {
+        const tokenResponse = await getVivaAccessToken();
+        const accessToken = tokenResponse.access_token;
+        const checkoutUrl = 'https://api.vivapayments.com/checkout/v2/orders';
+
+        console.log('Checkout Request Body:', paymentData); // Debug request body
+        const response = await fetch(checkoutUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${accessToken}`
+            },
+            body: JSON.stringify(paymentData)
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            console.log('Checkout API Response:', data); // Debug response
+            const orderCode = data.orderCode;
+            const checkoutRedirectUrl = `https://www.vivapayments.com/web/checkout?ref=${orderCode}`;
+            return checkoutRedirectUrl;
+        } else {
+            const errorBody = await response.text();
+            console.error('Checkout API Error Response:', errorBody);
+            throw new Error(`Failed to create payment order: ${response.status} ${response.statusText} - ${errorBody}`);
+        }
+    } catch (error) {
+        console.error('Error obtaining Viva checkout URL:', error);
+        throw error;
+    }
+}
+
+export async function getVivaWebhookKey() {
+    try {
+        const credentials = await getVivaCredentials();
+        const { viva_merchant_id, viva_api_key } = credentials;
+        const credentialsString = `${viva_merchant_id}:${viva_api_key}`;
+        const base64Credentials = Buffer.from(credentialsString).toString('base64');
+        const tokenUrl = 'https://www.vivapayments.com/api/messages/config/token';
+
+        const response = await fetch(tokenUrl, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Basic ${base64Credentials}`
+            }
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            console.log('Webhook Key Response:', data); // Debug response
+            return data.Key;
+        } else {
+            const errorBody = await response.text();
+            console.error('Webhook Key API Error Response:', errorBody);
+            throw new Error(`Failed to obtain webhook key: ${response.status} ${response.statusText} - ${errorBody}`);
+        }
+    } catch (error) {
+        console.error('Error obtaining Viva webhook key:', error);
+        throw error;
+    }
+}
+
+import wixData from 'wix-data';
+export async function get() {
+    wixData.query("logs")
+        .contains("phase", "webhook")
+        .find()
+        .then((results) => {
+            if (results.items.length > 0) {
+                console.log("Found logs:", results.items);
+                // Process the results as needed
+            } else {
+                console.log("No matching logs found.");
+            }
+        })
+        .catch((err) => {
+            console.error("Query failed:", err);
+        });
+}
